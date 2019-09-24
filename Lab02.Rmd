@@ -1,0 +1,176 @@
+---
+title: "Lab02"
+author: "Maha Mapara and Xinyi Lyu"
+date: "9/24/2019"
+output: html_document
+---
+This lab will explore whether or not state-level factors contribute to Car insurance premiums. 
+
+```{r cars}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(polynom)
+library(gridExtra)
+```
+
+* read in the data set `data/bad-drivers.csv`
+  * (recommended) rename the columns to shorter nicknames (check out the `names` function)
+* exploratory data analysis
+  * present some pictures and a brief description of trends you see in the data, and how they may influence fitting a model.
+
+```{r}
+#reading in the data set
+bad_driver <- read.csv("data/bad-drivers.csv")
+
+#changing column names
+names(bad_driver)[2] <- "num_fatal_colli" #Number of drivers involved in fatal collisions per billion miles
+names(bad_driver)[3] <- "pct_fatal_speed" #Were Speeding
+names(bad_driver)[4] <- "pct_fatal_alcohol" # Were Alcohol-Impaired
+names(bad_driver)[5] <- "pct_fatal_notdistract" #Not Distracted
+names(bad_driver)[6] <- "pct_fatal_noacc" #Not Been Involved In Any Previous Accidents
+names(bad_driver)[7] <- "insurance" #the Car Insurance Premiums
+names(bad_driver)[8] <- "insurance_comp_loss" #Losses incurred by insurance companies for collisions per insured driver ($)
+
+```
+
+
+
+```{r}
+#creating plots for each explanatory varibale against Car Insurance Premiums
+p1 <- ggplot(data=bad_driver, mapping=aes(x=num_fatal_colli, y=insurance)) +
+  geom_point(color = "red")
+
+p2 <- ggplot(data=bad_driver, mapping=aes(x=pct_fatal_speed, y=insurance)) +
+  geom_point(color = "red")
+
+p3 <- ggplot(data=bad_driver, mapping=aes(x=pct_fatal_alcohol, y=insurance)) +
+  geom_point(color = "red")
+
+p4 <- ggplot(data=bad_driver, mapping=aes(x=pct_fatal_notdistract, y=insurance)) +
+  geom_point(color = "red")
+
+p5 <- ggplot(data=bad_driver, mapping=aes(x=pct_fatal_noacc, y=insurance)) +
+  geom_point(color = "red")
+
+p6 <- ggplot(data=bad_driver, mapping=aes(x=insurance_comp_loss, y=insurance)) +
+  geom_point(color = "red")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, nrow = 2, ncol = 3)
+```
+
+p6 shows a positive association between insurance and insurance_comp_loss, so I would choose that as an explanatory variable for a simple linear regression. p1 (insurance and num_fatal_colli) seems to have a very weak negative association. None of the other plots show any visible positive or negative trends.
+
+
+
+
+* regression analysis
+  * The target variable for our regression models is `Car Insurance Premiums ($)`
+  * fit a simple linear regression model and save this model as `reg01`. 
+  * fit a multiple linear regression model that includes the variable you used in your simple linear regression and save this as `reg02`.
+
+```{r}
+
+reg01 <- lm(insurance ~ insurance_comp_loss, data = bad_driver)
+summary(reg01)
+
+
+```
+```{r}
+reg02 <- lm(insurance ~ poly(insurance_comp_loss, 3, raw = TRUE), data = bad_driver)
+summary(reg02)
+```
+
+* Cross-validation
+  * **For both reg01 and reg02**
+    * split your data into 5 cross-validation folds.
+    * write a for loop that trains your model on 4 of the folds and evaluates on the "held-out" fold.  (This for loop should iterate over all 5 folds.)
+    * compute the MSE for each validation fold
+    * compute the MSE averaged across all 5 folds.
+    
+```{r}
+#step 1: split into training and test sets, obtain validation folds
+
+library(caret)
+
+train_val_inds <- caret::createDataPartition(
+  y = bad_driver$insurance,
+  p = 0.8
+)
+
+driver_train_val <- bad_driver %>% slice(train_val_inds[[1]])
+driver_test <- bad_driver %>% slice(-train_val_inds[[1]])
+
+#now generate a partition of estimation set into 5 folds
+
+num_crossval_folds <- 5
+crossval_fold_inds <- caret::createFolds(
+  y =driver_train_val$insurance,
+  k = num_crossval_folds
+)  
+
+#step 2: getting performance for each validation fold, using the othe rfolds put together as a training set
+
+train_val_mse <- expand.grid(
+  poly_degree = seq_len(3),
+  val_fold_num = seq_len(num_crossval_folds),
+  train_mse = NA,
+  val_mse = NA
+)
+
+for (poly_degree in seq_len(3)){
+  for(val_fold_num in seq_len(num_crossval_folds)){
+    results_index <- which(
+      train_val_mse$poly_degree == poly_degree &
+      train_val_mse$val_fold_num == val_fold_num
+    )
+    bad_driver_train <- driver_train_val %>% slice(-crossval_fold_inds[[val_fold_num]])
+    bad_driver_val <- driver_train_val %>% slice(crossval_fold_inds[[val_fold_num]])
+    
+    fitpoly <- lm(insurance ~ poly(insurance_comp_loss, poly_degree), data = bad_driver)
+    
+    train_resids <- bad_driver_train$insurance - predict(fitpoly)
+    train_val_mse$train_mse[results_index] <- mean(train_resids^2)
+    
+    val_resids <- bad_driver_val$insurance - predict(fitpoly, bad_driver_val)
+    train_val_mse$val_mse[results_index] <- mean(val_resids^2)
+    
+  }
+}
+
+head(train_val_mse)
+```
+```{r}
+summarized_crossval_mse_results <- train_val_mse %>%
+  group_by(poly_degree) %>%
+  summarize(
+    crossval_mse = mean(val_mse)
+  )
+
+summarized_crossval_mse_results
+```
+  
+    
+## Discussion
+
+  Please explain your model, making sure to reference the coefficients of the model.  You should discuss any relevant hypothesis tests or confidence intervals as appropriate.
+  
+  How does your multiple regression model compare to the simple linear regression model, and how would you communicate these results to an audience?
+  
+  
+The fit reg01 is the simple linear model where the explanatory variable is insurance_comp_loss i.e. losses incurred by insurance companies for collisions per insured driver ($). We use this to predict Car Insurance Premiums (insurance in the data frame). The $\beta_1$ paramter estimate was significant at an alpha = 0.05 level which means that the null hypothesis $H_0$: $\beta_1$ = 0 would be rejected.
+
+The model reg02 is a polynomial regression model, with 3 degrees. None of the degree parameter estimates were significant at the alpha = 0.05 level which means none of them are significant predictors of insurance and so here, we would fail to reject the null hypothesis.
+
+##How does the cross-validation MSE compare between your simple and multiple regression models?  What does this mean?
+```{r}
+test_resids <- driver_test$insurance - predict(reg01, newdata = driver_test)
+mean(test_resids^2)
+```
+
+```{r}
+test_resids <- driver_test$insurance - predict(reg02, newdata = driver_test)
+mean(test_resids^2)
+```
+
+We pick the model with the smallest MSE, in this case, reg01.
